@@ -7,16 +7,6 @@ University of Hail - Graduation Project
 College of Computer Science and Engineering
 Department of Computer Science
 
-Supervised by: Dr. Ehab Alnfrawy
-
-Project Team:
-- Omar Khalid Ali (202111316)
-- Abdulrahman Kasem Shoshara (202111312)
-- Omar Abdullah Alharbi (202101085)
-- Khalid Abdulaziz Alrashdan (202206059)
-- Abdullah Nasser Alnazha (202100025)
-- Khalid Abdullah Alshammari (202104213)
-
 December 2025
 
 Tested with: Volatility 3 (2.26.x). Python 3.10+.
