@@ -3,18 +3,7 @@
 **Detection of Masqueraded Processes in Volatile Memory**
 
 University of Hail · College of Computer Science and Engineering  
-Supervised by: **Dr. Ehab Alnfrawy**
 
-| Name | Student ID |
-|---|---|
-| Omar Khalid Ali | 202111316 |
-| Abdulrahman Kasem Shoshara | 202111312 |
-| Omar Abdullah Alharbi | 202101085 |
-| Khalid Abdulaziz Alrashdan | 202206059 |
-| Abdullah Nasser Alnazha | 202100025 |
-| Khalid Abdullah Alshammari | 202104213 |
-
----
 
 ## Quick Start (Docker)
 
