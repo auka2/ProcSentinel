@@ -1,0 +1,793 @@
+# =============================================================================
+# ProcSentinel — Detection Pack  v3.0
+# University of Hail · Dr. Ehab Alnfrawy
+#
+# Design principles:
+#   - Every rule needs 2+ conditions — no single-field triggers
+#   - Focus on user-mode attacks detectable in ANY Windows memory dump
+#   - No kernel-level rules (high false positive, hard to demonstrate)
+#   - All rules mapped to MITRE ATT&CK Enterprise
+#   - Easy to create lab samples for each category
+# =============================================================================
+
+volatility:
+  v3_binaries: ["vol", "volatility3", "vol3"]
+
+scoring:
+  severity_bands:
+    - {label: Informational, max: 39}
+    - {label: Low,           max: 79}
+    - {label: Medium,        max: 129}
+    - {label: High,          max: 199}
+    - {label: Critical,      max: 500}
+
+os_profiles:
+  windows:
+
+    plugins:
+      - {name: windows.pslist,    format: csv}
+      - {name: windows.psscan,    format: csv}
+      - {name: windows.cmdline,   format: csv}
+      - {name: windows.dlllist,   format: csv}
+      - {name: windows.verinfo,   format: csv}
+      - {name: windows.netstat,   format: csv, fallback: [windows.netscan]}
+      - {name: windows.netscan,   format: csv}
+      - {name: windows.malfind,   format: text}
+      - {name: windows.ldrmodules, format: text}
+      - {name: windows.svcscan,   format: csv}
+      - {name: windows.handles,   format: text}
+      - {name: windows.sessions,  format: csv}
+
+    detections:
+
+      # ════════════════════════════════════════════════════════════════════════
+      # CATEGORY 1 — MASQUERADE  (T1036.*)
+      # HOW TO DEMO: rename malware.exe to svchost.exe, run from Desktop/Temp
+      # ════════════════════════════════════════════════════════════════════════
+
+      # ── M-01 ─────────────────────────────────────────────────────────────
+      - id: masquerade_wrong_path
+        title: "System Process Running from Wrong Path"
+        category: MASQ
+        enabled: true
+        weight: 95
+        mitre: ["T1036.005"]
+        narrative: >
+          A process uses the exact name of a Windows system binary but runs
+          from outside System32/SysWOW64. Legitimate system binaries never
+          deviate from their fixed canonical paths. Name + wrong path =
+          confirmed masquerading with near-zero false positives.
+        params:
+          known_system_processes:
+            - svchost.exe
+            - lsass.exe
+            - csrss.exe
+            - wininit.exe
+            - winlogon.exe
+            - services.exe
+            - smss.exe
+            - spoolsv.exe
+            - dllhost.exe
+            - dwm.exe
+            - taskhost.exe
+            - taskhostw.exe
+            - lsm.exe
+            - conhost.exe
+            - userinit.exe
+            - wininit.exe
+          allowed_paths:
+            - \windows\system32\
+            - \windows\syswow64\
+            - \windows\
+          suspicious_paths:
+            - \temp\
+            - \tmp\
+            - \appdata\
+            - \users\public\
+            - \downloads\
+            - \desktop\
+            - \programdata\
+            - \recycle
+
+      # ── M-02 ─────────────────────────────────────────────────────────────
+      - id: masquerade_typosquat
+        title: "Typosquatting — Misspelled System Process Name"
+        category: MASQ
+        enabled: true
+        weight: 85
+        mitre: ["T1036.003"]
+        narrative: >
+          Process name resembles a system binary but differs by 1-2 characters
+          (svch0st.exe, lsasss.exe, scvhost.exe). Unicode normalization prevents
+          Cyrillic/lookalike character bypass attacks.
+        params:
+          known_system_processes:
+            - svchost.exe
+            - lsass.exe
+            - explorer.exe
+            - csrss.exe
+            - wininit.exe
+            - winlogon.exe
+            - services.exe
+            - smss.exe
+            - taskhost.exe
+            - taskhostw.exe
+            - spoolsv.exe
+            - dwm.exe
+            - conhost.exe
+            - dllhost.exe
+            - rundll32.exe
+            - regsvr32.exe
+            - msiexec.exe
+            - userinit.exe
+            - lsm.exe
+            - searchindexer.exe
+          fuzzy_threshold: 2
+
+      # ── M-03 ─────────────────────────────────────────────────────────────
+      - id: masquerade_svchost_no_k
+        title: "Fake svchost.exe — Missing Mandatory -k Parameter"
+        category: MASQ
+        enabled: true
+        weight: 90
+        mitre: ["T1036.005", "T1036"]
+        narrative: >
+          Every real svchost.exe is launched by services.exe with a mandatory
+          -k ServiceGroupName argument. A svchost.exe without -k in its command
+          line, OR running from outside System32, is masqueraded malware.
+        params:
+          process_name: svchost.exe
+          required_cmdline_contains: "-k "
+          allowed_paths:
+            - \windows\system32\
+            - \windows\syswow64\
+
+      # ── M-04 ─────────────────────────────────────────────────────────────
+      - id: masquerade_boot_chain
+        title: "Boot Process with Wrong Parent — PPID Spoofing"
+        category: MASQ
+        enabled: true
+        weight: 85
+        mitre: ["T1036.005", "T1134.004"]
+        narrative: >
+          Windows boot-chain parent relationships are fixed on all builds.
+          services.exe must be child of wininit.exe; winlogon.exe and csrss.exe
+          must be children of smss.exe. Any deviation = PPID spoofing.
+        params:
+          enforced_relationships:
+            - {child: services.exe,  allowed_parents: [wininit.exe]}
+            - {child: winlogon.exe,  allowed_parents: [smss.exe]}
+            - {child: csrss.exe,     allowed_parents: [smss.exe]}
+
+      # ── M-05 ─────────────────────────────────────────────────────────────
+      - id: unusual_parent_child
+        title: "lsass.exe with Wrong Parent — Critical Masquerade"
+        category: MASQ
+        enabled: true
+        weight: 95
+        mitre: ["T1036.005", "T1055", "T1134.004"]
+        narrative: >
+          lsass.exe is exclusively started by wininit.exe. Any other parent =
+          masquerade, PPID spoofing, or credential-dumping injection.
+        params:
+          child_process: lsass.exe
+          known_good_parents: [wininit.exe]
+
+      # ── M-06 ─────────────────────────────────────────────────────────────
+      - id: masquerade_explorer
+        title: "Fake explorer.exe — Wrong Execution Path"
+        category: MASQ
+        enabled: true
+        weight: 80
+        mitre: ["T1036.005"]
+        narrative: >
+          Windows Explorer always runs from C:\Windows\explorer.exe only.
+          Any other path = fake masqueraded process.
+        params:
+          process_name: explorer.exe
+          allowed_paths:
+            - \windows\explorer.exe
+
+      # ── M-07 ─────────────────────────────────────────────────────────────
+      - id: masquerade_unicode_padding
+        title: "Invisible Characters in Process Name — Unicode Masquerade"
+        category: MASQ
+        enabled: true
+        weight: 80
+        mitre: ["T1036.008"]
+        narrative: >
+          Attackers append zero-width Unicode characters or trailing spaces
+          to process names so they appear identical visually to system processes.
+        params:
+          check_trailing_space: true
+
+      # ── M-08 ─────────────────────────────────────────────────────────────
+      - id: verinfo_mismatch
+        title: "Missing Version Info in System Binary — Unsigned Fake"
+        category: MASQ
+        enabled: true
+        weight: 55
+        mitre: ["T1036.001"]
+        narrative: >
+          Every Microsoft binary in System32 carries CompanyName, FileDescription,
+          and OriginalFilename. A binary there without these fields was placed
+          by an attacker.
+        params:
+          system_dir_regex: "(?i)(system32|syswow64)"
+
+      # ════════════════════════════════════════════════════════════════════════
+      # CATEGORY 2 — EXECUTION & LOLBins  (T1059.*, T1218.*)
+      # HOW TO DEMO: run certutil -decode, powershell -enc, mshta http://...
+      # These leave command-line evidence in process memory
+      # ════════════════════════════════════════════════════════════════════════
+
+      # ── E-01 ─────────────────────────────────────────────────────────────
+      - id: shell_spawned_by_office_or_browser
+        title: "Shell Spawned by Office or Browser — Macro/Exploit"
+        category: EXECUTION
+        enabled: true
+        weight: 75
+        mitre: ["T1059.001", "T1566.001", "T1204.002"]
+        narrative: >
+          cmd.exe or PowerShell spawned by an Office application or browser
+          indicates a macro execution, browser exploit, or phishing payload.
+          Requires both the suspicious parent AND the shell child confirmed.
+        params:
+          child_processes:
+            - cmd.exe
+            - powershell.exe
+            - pwsh.exe
+            - wscript.exe
+            - cscript.exe
+            - mshta.exe
+            - rundll32.exe
+            - regsvr32.exe
+          suspicious_parents:
+            - winword.exe
+            - excel.exe
+            - powerpnt.exe
+            - outlook.exe
+            - chrome.exe
+            - firefox.exe
+            - msedge.exe
+            - iexplore.exe
+            - acrord32.exe
+            - mspub.exe
+            - onenote.exe
+            - msaccess.exe
+            - mshta.exe
+            - wscript.exe
+            - cscript.exe
+
+      # ── E-02 ─────────────────────────────────────────────────────────────
+      - id: lolbin_execution
+        title: "Living-off-the-Land Binary (LOLBin) Abuse"
+        category: EXECUTION
+        enabled: true
+        weight: 70
+        mitre: ["T1218", "T1218.001", "T1218.010", "T1218.011"]
+        narrative: >
+          Legitimate Windows binaries (certutil, mshta, regsvr32, rundll32,
+          wmic, bitsadmin) abused to download or execute payloads — bypassing
+          application whitelisting. Detected by suspicious arguments in
+          process command-line memory.
+        params:
+          suspicious_keywords:
+            - "certutil.*-decode"
+            - "certutil.*-urlcache"
+            - "certutil.*-f.*http"
+            - "mshta.*http"
+            - "mshta.*vbscript"
+            - "mshta.*javascript"
+            - "regsvr32.*/s.*/u.*/i:http"
+            - "regsvr32.*scrobj"
+            - "rundll32.*javascript"
+            - "rundll32.*vbscript"
+            - "wmic.*process.*call.*create"
+            - "bitsadmin.*/transfer"
+            - "bitsadmin.*/addfile.*http"
+            - "msiexec.*/q.*/i.*http"
+            - "powershell.*-enc"
+            - "powershell.*-encodedcommand"
+            - "powershell.*bypass.*downloadstring"
+            - "powershell.*iex.*invoke"
+            - "powershell.*net.webclient"
+
+      # ── E-03 ─────────────────────────────────────────────────────────────
+      - id: powershell_obfuscation
+        title: "PowerShell Obfuscation — Encoded or Bypass Execution"
+        category: EXECUTION
+        enabled: true
+        weight: 70
+        mitre: ["T1027", "T1059.001"]
+        narrative: >
+          PowerShell with base64 encoding, execution policy bypass, or hidden
+          window — standard techniques to evade script-based security controls.
+          Requires a PowerShell process AND suspicious argument pattern.
+        params:
+          suspicious_keywords:
+            - "powershell.*-e .*[A-Za-z0-9+/]{20}"
+            - "powershell.*-enc"
+            - "powershell.*-encodedcommand"
+            - "powershell.*-nop.*-w.*hidden"
+            - "powershell.*-windowstyle.*hidden"
+            - "powershell.*bypass"
+            - "powershell.*-noprofile.*-exec"
+            - "powershell.*set-executionpolicy.*bypass"
+
+      # ── E-04 ─────────────────────────────────────────────────────────────
+      - id: exec_from_tmp
+        title: "Process Executing from Temp or Writable Directory"
+        category: EXECUTION
+        enabled: true
+        weight: 65
+        mitre: ["T1036.005", "T1059"]
+        narrative: >
+          Legitimate Windows system processes never run from Temp, AppData,
+          or Downloads. Highest confidence when combined with masquerade_wrong_path.
+        params:
+          temp_like_paths:
+            - \temp\
+            - \tmp\
+            - \appdata\local\temp\
+            - \users\public\
+            - \downloads\
+            - \desktop\
+            - \programdata\
+            - \recycle.bin\
+
+      # ── E-05 ─────────────────────────────────────────────────────────────
+      - id: suspicious_cmdline_args
+        title: "Suspicious Command Line — Attacker Reconnaissance / Tooling"
+        category: EXECUTION
+        enabled: true
+        weight: 60
+        mitre: ["T1059.001", "T1059.003", "T1082"]
+        narrative: >
+          Process command-line arguments matching attacker reconnaissance,
+          lateral movement, or offensive tool patterns found in memory.
+        params:
+          suspicious_keywords:
+            - "net user /domain"
+            - "net group /domain"
+            - "nltest /domain_trusts"
+            - "nltest /dclist"
+            - "whoami /all"
+            - "net use.*\\\\"
+            - "wmic.*node"
+            - "psexec"
+            - "schtasks.*/create.*/s"
+            - "invoke-webrequest"
+            - "Start-BitsTransfer"
+            - "curl.*http.*-o"
+            - "wget.*http"
+
+      # ════════════════════════════════════════════════════════════════════════
+      # CATEGORY 3 — PROCESS INJECTION  (T1055.*)
+      # HOW TO DEMO: inject shellcode into notepad.exe using Metasploit
+      # or use a hollowing tool like Process Herpaderping / RunPE
+      # ════════════════════════════════════════════════════════════════════════
+
+      # ── I-01 ─────────────────────────────────────────────────────────────
+      - id: malfind_injection
+        title: "Injected Executable Code in Process Memory"
+        category: INJECTION
+        enabled: true
+        weight: 75
+        mitre: ["T1055", "T1055.001", "T1055.012"]
+        narrative: >
+          Memory region with PAGE_EXECUTE_READWRITE protection and MZ/PE headers
+          not backed by a file on disk. Classic signature of process hollowing,
+          DLL injection, or shellcode injection into a legitimate process.
+        params:
+          keywords:
+            - "MZ"
+            - "PAGE_EXECUTE_READWRITE"
+            - "4d5a"
+
+      # ── I-02 ─────────────────────────────────────────────────────────────
+      - id: hollowed_process
+        title: "Process Hollowing — Injected PE in Legitimate Process"
+        category: INJECTION
+        enabled: true
+        weight: 90
+        mitre: ["T1055.012"]
+        narrative: >
+          Process hollowing replaces a legitimate process image in memory with
+          malicious code. Detected via malfind reporting executable+writable
+          memory regions with MZ/PE headers inside known system processes.
+        params:
+          keywords:
+            - "MZ"
+            - "PAGE_EXECUTE_READWRITE"
+            - "Hollowed"
+            - "VAD"
+
+      # ── I-03 ─────────────────────────────────────────────────────────────
+      - id: ldr_unlinked_module
+        title: "Unlinked DLL Module — Hidden Injection"
+        category: INJECTION
+        enabled: false
+        weight: 70
+        mitre: ["T1055.001", "T1036"]
+        narrative: >
+          A loaded module absent from all three DLL load-order lists (InLoad,
+          InInit, InMem). Disabled by default due to false positives from
+          Windows Defender and user applications using custom loaders.
+        params:
+          temp_like_paths:
+            - \temp\
+            - \tmp\
+            - \appdata\local\
+            - \users\public\
+            - \programdata\
+
+      # ════════════════════════════════════════════════════════════════════════
+      # CATEGORY 4 — CREDENTIAL ACCESS  (T1003.*)
+      # HOW TO DEMO: run Mimikatz sekurlsa::logonpasswords or
+      # procdump -ma lsass.exe — both leave cmdline evidence in memory
+      # ════════════════════════════════════════════════════════════════════════
+
+      # ── C-01 ─────────────────────────────────────────────────────────────
+      - id: handles_lsass_access
+        title: "Suspicious Handle to lsass.exe — Credential Dumping"
+        category: CREDACCESS
+        enabled: true
+        weight: 85
+        mitre: ["T1003.001"]
+        narrative: >
+          A non-system process opened a handle to lsass.exe with VM-read or
+          full-access rights — the exact access pattern used by Mimikatz,
+          ProcDump, and credential dumping frameworks.
+        params:
+          access_regex: "(?i)(0x1010|0x1410|0x1fffff|PROCESS_VM_READ|PROCESS_ALL_ACCESS)"
+          target_process_regex: "(?i)^lsass\\.exe$"
+
+      # ── C-02 ─────────────────────────────────────────────────────────────
+      - id: credential_dumping_cmdline
+        title: "Credential Dumping Tool in Command Line"
+        category: CREDACCESS
+        enabled: true
+        weight: 90
+        mitre: ["T1003.001", "T1003.002"]
+        narrative: >
+          Command-line arguments matching Mimikatz, ProcDump, comsvcs.dll
+          MiniDump, or SAM/SYSTEM registry export in process memory — a
+          complete credential theft toolchain signature.
+        params:
+          suspicious_keywords:
+            - "sekurlsa"
+            - "logonpasswords"
+            - "lsadump"
+            - "mimikatz"
+            - "kerberos::ptt"
+            - "privilege::debug"
+            - "procdump.*lsass"
+            - "comsvcs.*minidump"
+            - "comsvcs.*MiniDump"
+            - "rundll32.*comsvcs"
+            - "reg.*save.*sam"
+            - "reg.*save.*system"
+            - "reg.*save.*security"
+            - "ntdsutil.*ifm"
+            - "invoke-mimikatz"
+            - "out-minidump"
+
+      # ════════════════════════════════════════════════════════════════════════
+      # CATEGORY 5 — PERSISTENCE  (T1543.*, T1547.*, T1053.*)
+      # HOW TO DEMO: add a Run key via reg add, create a suspicious service,
+      # or schedule a task that runs powershell from Temp
+      # ════════════════════════════════════════════════════════════════════════
+
+      # ── P-01 ─────────────────────────────────────────────────────────────
+      - id: services_suspicious
+        title: "Suspicious Service from Temp or Writable Path"
+        category: PERSISTENCE
+        enabled: true
+        weight: 70
+        mitre: ["T1543.003", "T1036.005"]
+        narrative: >
+          A Windows service executable in a temp or user-writable directory.
+          Services provide automatic SYSTEM-level startup — a reliable
+          persistence mechanism used by most malware families.
+        params:
+          temp_like_paths:
+            - \temp\
+            - \tmp\
+            - \appdata\
+            - \users\public\
+            - \programdata\
+            - \downloads\
+            - \recycle.bin\
+
+      # ── P-02 ─────────────────────────────────────────────────────────────
+      - id: registry_run_key_persistence
+        title: "Malicious Registry Run Key — Startup Persistence"
+        category: PERSISTENCE
+        enabled: true
+        weight: 70
+        mitre: ["T1547.001"]
+        narrative: >
+          Registry Run/RunOnce keys pointing to temp directories or containing
+          obfuscated commands — execute on every user login. A fundamental
+          persistence mechanism used by virtually every malware family.
+        params:
+          keys:
+            - "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run"
+            - "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce"
+            - "SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Run"
+          value_regex: "(?i)(\\temp\\|\\appdata\\|\\users\\public\\|powershell|cmd\\.exe|wscript|cscript|mshta|regsvr32|rundll32|certutil|bitsadmin|\\downloads\\|encoded|bypass)"
+
+      # ── P-03 ─────────────────────────────────────────────────────────────
+      - id: winlogon_hijack
+        title: "Winlogon Shell/Userinit Hijack — Logon Persistence"
+        category: PERSISTENCE
+        enabled: true
+        weight: 85
+        mitre: ["T1547.004"]
+        narrative: >
+          Winlogon Userinit and Shell registry values define what runs at logon.
+          Legitimate values are always userinit.exe and explorer.exe. Any
+          modification adds a malicious binary that runs at every logon.
+        params:
+          keys:
+            - "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon"
+          value_regex: "(?i)^(?!.*userinit\\.exe).*\\.exe|(?i)^(?!.*explorer\\.exe).*shell.*\\.exe"
+
+      # ── P-04 ─────────────────────────────────────────────────────────────
+      - id: scheduled_tasks_suspicious
+        title: "Suspicious Scheduled Task — Persistence or Execution"
+        category: PERSISTENCE
+        enabled: true
+        weight: 65
+        mitre: ["T1053.005"]
+        narrative: >
+          Scheduled tasks executing from temp directories or invoking script
+          engines. Tasks survive reboots and can run as SYSTEM — used by
+          malware for persistence and lateral movement.
+        params:
+          temp_like_paths:
+            - \temp\
+            - \tmp\
+            - \appdata\local\temp\
+            - \users\public\
+            - \programdata\
+            - \downloads\
+          risky_exts:
+            - .ps1
+            - .vbs
+            - .js
+            - .bat
+            - .cmd
+            - .hta
+
+      # ════════════════════════════════════════════════════════════════════════
+      # CATEGORY 6 — DEFENSE EVASION  (T1562.*, T1027.*)
+      # HOW TO DEMO: run Set-MpPreference -DisableRealtimeMonitoring $true
+      # or netsh advfirewall set allprofiles state off — stays in cmdline memory
+      # ════════════════════════════════════════════════════════════════════════
+
+      # ── D-01 ─────────────────────────────────────────────────────────────
+      - id: psxview_hidden
+        title: "Process Hidden from Process List — DKOM Rootkit"
+        category: STEALTH
+        enabled: false
+        weight: 90
+        mitre: ["T1014", "T1036"]
+        narrative: >
+          A persistent system process in psscan but absent from pslist means
+          it was removed from ActiveProcessLinks — classic DKOM rootkit technique.
+          Only fires for always-running system processes to eliminate false positives
+          from naturally short-lived processes.
+        params: {}
+
+      # ── D-02 ─────────────────────────────────────────────────────────────
+      - id: security_tool_tampering
+        title: "Security Tool Tampering — AV / Firewall / Logging Disabled"
+        category: EVASION
+        enabled: true
+        weight: 90
+        mitre: ["T1562.001", "T1562.004"]
+        narrative: >
+          Command-line evidence of disabling Windows Defender, firewall, or
+          event logging in process memory. Attackers disable defenses before
+          payload deployment — a strong pre-attack indicator.
+        params:
+          suspicious_keywords:
+            - "Set-MpPreference.*DisableRealtimeMonitoring.*true"
+            - "Set-MpPreference.*DisableAntiSpyware"
+            - "Add-MpPreference.*ExclusionPath"
+            - "sc.*stop.*windefend"
+            - "sc.*delete.*windefend"
+            - "net.*stop.*windefend"
+            - "taskkill.*msmpeng"
+            - "netsh.*firewall.*set.*opmode.*disable"
+            - "netsh.*advfirewall.*set.*allprofiles.*state.*off"
+            - "wevtutil.*cl"
+            - "wevtutil.*clear-log"
+            - "Clear-EventLog"
+            - "auditpol.*/set.*failure:disable"
+
+      # ════════════════════════════════════════════════════════════════════════
+      # CATEGORY 7 — IMPACT  (T1490)
+      # HOW TO DEMO: run vssadmin delete shadows /all /quiet in a VM
+      # The command stays in memory and is clearly detected
+      # ════════════════════════════════════════════════════════════════════════
+
+      # ── IM-01 ────────────────────────────────────────────────────────────
+      - id: shadow_copy_deletion
+        title: "Shadow Copy Deletion — Ransomware Preparation"
+        category: IMPACT
+        enabled: true
+        weight: 95
+        mitre: ["T1490", "T1059.001"]
+        narrative: >
+          Deletion of Volume Shadow Copies removes backup restore points —
+          the standard ransomware preparation step. One of the clearest
+          pre-ransomware indicators available in memory forensics.
+        params:
+          suspicious_keywords:
+            - "vssadmin.*delete.*shadows"
+            - "vssadmin.*resize.*shadowstorage"
+            - "wmic.*shadowcopy.*delete"
+            - "wmic.*shadowcopy.*call.*delete"
+            - "Get-WmiObject.*Win32_ShadowCopy.*Delete"
+            - "bcdedit.*/set.*recoveryenabled.*no"
+            - "bcdedit.*/set.*bootstatuspolicy"
+            - "wbadmin.*delete.*catalog"
+            - "diskshadow.*delete"
+
+      # ════════════════════════════════════════════════════════════════════════
+      # CATEGORY 8 — NETWORK / C2  (T1071.*, T1571)
+      # HOW TO DEMO: run nc.exe or a Metasploit reverse shell,
+      # the connection shows in netstat/netscan output
+      # ════════════════════════════════════════════════════════════════════════
+
+      # ── N-01 ─────────────────────────────────────────────────────────────
+      - id: suspicious_connection
+        title: "Suspicious Outbound Network Connection"
+        category: NETWORK
+        enabled: true
+        weight: 55
+        mitre: ["T1071.001", "T1095"]
+        narrative: >
+          Established connection to an IP outside baseline network CIDRs
+          and not on standard allowed ports — potential C2 communication.
+        params: {}
+
+      # ── N-02 ─────────────────────────────────────────────────────────────
+      - id: suspicious_port_activity
+        title: "Connection on Suspicious Port — RAT / Backdoor / Reverse Shell"
+        category: NETWORK
+        enabled: true
+        weight: 60
+        mitre: ["T1571", "T1095"]
+        narrative: >
+          Network activity on ports commonly used by RATs, C2 frameworks,
+          and reverse shells — rarely used by legitimate software.
+        params:
+          suspicious_ports:
+            - 1080    # SOCKS proxy / Cobalt Strike
+            - 1337    # Common backdoor port
+            - 4444    # Metasploit meterpreter default
+            - 4445    # Metasploit alternate
+            - 5555    # RAT communication
+            - 6667    # IRC-based C2
+            - 9001    # Tor relay
+            - 9050    # Tor SOCKS proxy
+            - 31337   # BackOrifice / elite
+
+      # ── N-03 ─────────────────────────────────────────────────────────────
+      - id: netscan_beacon_like
+        title: "Suspicious Process with External Connection — C2 Beacon"
+        category: NETWORK
+        enabled: true
+        weight: 65
+        mitre: ["T1071.001", "T1132"]
+        narrative: >
+          A known offensive tool (PowerShell, cmd, wscript, netcat) has an
+          active ESTABLISHED external connection — strong indicator of a
+          reverse shell or C2 beaconing session.
+        params:
+          suspicious_process_regex: "(?i)(powershell|cmd|wscript|cscript|mshta|rundll32|regsvr32|certutil|bitsadmin|schtasks|wmic|curl|wget|python|ruby|perl|nc\\.exe|ncat|netcat)"
+
+      # ════════════════════════════════════════════════════════════════════════
+      # CATEGORY 9 — CORRELATIONS  (Multi-signal, high-confidence chains)
+      # These fire when two related findings occur together — much stronger
+      # than any single indicator alone
+      # ════════════════════════════════════════════════════════════════════════
+
+      # ── COR-01 ───────────────────────────────────────────────────────────
+      - id: correlation_masq_and_hidden
+        title: "Correlated: Masquerade + Hidden Process — APT Signature"
+        category: CORRELATION
+        enabled: true
+        weight: 60
+        mitre: ["T1036.005", "T1014"]
+        narrative: >
+          Same PID flagged for masquerading AND DKOM hiding. Disguise +
+          concealment is the strongest APT indicator in memory forensics —
+          characteristic of sophisticated threat actors.
+        params:
+          correlation_pairs:
+            - primary_ids:   [masquerade_wrong_path, masquerade_svchost_no_k, masquerade_boot_chain, unusual_parent_child]
+              secondary_ids: [psxview_hidden, malfind_injection, hollowed_process]
+
+      # ── COR-02 ───────────────────────────────────────────────────────────
+      - id: correlation_injection_and_network
+        title: "Correlated: Code Injection + Network — Active C2 Channel"
+        category: CORRELATION
+        enabled: true
+        weight: 65
+        mitre: ["T1055", "T1071.001"]
+        narrative: >
+          A process with confirmed code injection AND suspicious network
+          connections — definitive indicator of active C2 communication
+          through an injected payload.
+        params:
+          correlation_pairs:
+            - primary_ids:   [malfind_injection, hollowed_process]
+              secondary_ids: [suspicious_connection, netscan_beacon_like, suspicious_port_activity]
+
+      # ── COR-03 ───────────────────────────────────────────────────────────
+      - id: correlation_credential_and_network
+        title: "Correlated: Credential Dumping + Network — Active Exfiltration"
+        category: CORRELATION
+        enabled: true
+        weight: 70
+        mitre: ["T1003.001", "T1041"]
+        narrative: >
+          Evidence of credential theft AND suspicious network connections —
+          credentials were stolen and are being exfiltrated to the attacker.
+        params:
+          correlation_pairs:
+            - primary_ids:   [handles_lsass_access, credential_dumping_cmdline]
+              secondary_ids: [suspicious_connection, netscan_beacon_like]
+
+      # ── COR-04 ───────────────────────────────────────────────────────────
+      - id: correlation_defense_evasion_and_payload
+        title: "Correlated: Defense Disabling + Payload — Full Attack Chain"
+        category: CORRELATION
+        enabled: true
+        weight: 75
+        mitre: ["T1562.001", "T1059.001"]
+        narrative: >
+          Security tools disabled AND malicious payload executed in the same
+          session — the standard attack sequence for ransomware and APT groups.
+          Confirms an active, intentional attack rather than accidental findings.
+        params:
+          correlation_pairs:
+            - primary_ids:   [security_tool_tampering, shadow_copy_deletion]
+              secondary_ids: [exec_from_tmp, lolbin_execution, malfind_injection, shell_spawned_by_office_or_browser]
+
+      # ── COR-05 ───────────────────────────────────────────────────────────
+      - id: correlation_masq_and_network
+        title: "Correlated: Masquerade + Network — C2 via Fake System Process"
+        category: CORRELATION
+        enabled: true
+        weight: 65
+        mitre: ["T1036.005", "T1071.001"]
+        narrative: >
+          A masqueraded process (fake svchost, wrong path) is ALSO making
+          suspicious network connections. Malware masquerades as a system
+          process precisely to blend its C2 traffic with legitimate traffic.
+        params:
+          correlation_pairs:
+            - primary_ids:   [masquerade_wrong_path, masquerade_svchost_no_k, masquerade_explorer]
+              secondary_ids: [suspicious_connection, suspicious_port_activity, netscan_beacon_like]
+
+      # ── COR-06 ───────────────────────────────────────────────────────────
+      - id: correlation_lolbin_and_network
+        title: "Correlated: LOLBin Abuse + Network — Download and Execute"
+        category: CORRELATION
+        enabled: true
+        weight: 70
+        mitre: ["T1218", "T1105"]
+        narrative: >
+          A Living-off-the-Land binary (certutil, mshta, bitsadmin) is ALSO
+          making network connections — confirming active payload download or
+          C2 communication through a trusted Windows binary.
+        params:
+          correlation_pairs:
+            - primary_ids:   [lolbin_execution, powershell_obfuscation]
+              secondary_ids: [suspicious_connection, netscan_beacon_like, suspicious_port_activity]

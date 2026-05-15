@@ -1,0 +1,57 @@
+# ==============================================================================
+# ProcSentinel v3 — docker-compose.yml
+#
+# COMMANDS:
+#   First run:      docker-compose up --build
+#   Start again:    docker-compose up
+#   Background:     docker-compose up -d
+#   Stop cleanly:   docker-compose down          ← always use this, not Ctrl+C
+#   Full rebuild:   docker-compose down && docker-compose up --build
+#   View logs:      docker-compose logs -f
+# ==============================================================================
+
+version: "3.9"
+
+services:
+  procsentinel:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: procsentinel
+    restart: unless-stopped
+
+    ports:
+      - "8501:8501"
+
+    volumes:
+      # Drop your .raw / .vmem / .mem / .lime dumps into ./memory/
+      # They appear in the UI dropdown automatically — no paths to type
+      - ./memory:/app/memory
+      # Analysis outputs: reports, findings, raw artifacts
+      - ./out:/app/out
+
+    environment:
+      # Login credentials (change in .env before deploying)
+      - PROCSENTINEL_USER=${PROCSENTINEL_USER:-admin}
+      - PROCSENTINEL_PASS=${PROCSENTINEL_PASS:-procsentinel}
+      # AbuseIPDB API key for IP reputation (get free key at abuseipdb.com/api)
+      - ABUSEIPDB_KEY=${ABUSEIPDB_KEY:-}
+      # Set to 1 for verbose debug logging
+      - PROCSENTINEL_DEBUG=${PROCSENTINEL_DEBUG:-0}
+      - STREAMLIT_SERVER_HEADLESS=true
+      - STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+      - STREAMLIT_THEME_BASE=dark
+
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 512M
+
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s

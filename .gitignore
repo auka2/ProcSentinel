@@ -1,0 +1,21 @@
+# Memory images (too large for GitHub)
+memory/
+*.raw
+*.vmem
+*.mem
+*.lime
+*.dmp
+
+# Output files
+out/
+
+# Environment files (contains passwords!)
+.env
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Docker volumes
+volumes/
