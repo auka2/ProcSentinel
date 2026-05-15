@@ -142,14 +142,3 @@ Place dumps in `memory/` next to `app.py`.
 
 ---
 
-## v3 Changes
-
-- All `[DEBUG]` output removed — clean logs only
-- Login validates against real credentials (env vars), with 5-attempt lockout
-- API key read from `ABUSEIPDB_KEY` env var — no longer exposed in process list
-- Artifact downloads stream via `st.download_button` — no OOM on large files
-- Boot chain detector no longer flags winlogon/csrss as suspicious when smss.exe has exited (normal Windows behaviour)
-- Windows Defender DLLs no longer flagged as hidden injection (false positive)
-- MITRE technique badges are clickable links to attack.mitre.org
-- Unicode normalization in typosquat engine blocks Cyrillic lookalike attacks
-# ProcSentinel
