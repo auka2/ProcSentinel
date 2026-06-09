@@ -1,0 +1,4 @@
+{"id": "masquerade_wrong_path", "title": "System Process from Wrong Path", "weight": 95, "mitre": ["T1036.005"], "evidence": [{"pid": 756, "name": "svchost.exe", "path": "C:\\WINDOWS\\svchost.exe", "command_line": "C:\\WINDOWS\\svchost.exe", "user_writable_hint": "yes"}]}
+{"id": "unusual_parent_child", "title": "Critical Process with Unexpected Parent", "weight": 90, "mitre": ["T1036.005"], "evidence": [{"child_name": "services.exe", "child_pid": 672, "parent_name": "explorer.exe", "parent_pid": 1640}]}
+{"id": "malfind_injection", "title": "Injected Code in Process Memory", "weight": 85, "mitre": ["T1055"], "evidence": [{"process": "svchost.exe", "pid": 756, "Start": "0x980000", "Protection": "PAGE_EXECUTE_READWRITE"}]}
+{"id": "exec_from_tmp", "title": "Process Executing from Temp", "weight": 60, "mitre": ["T1059", "T1036.005"], "evidence": [{"pid": 1024, "name": "msupdate.exe", "path": "C:\\WINDOWS\\TEMP\\msupdate.exe"}]}
