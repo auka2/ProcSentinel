@@ -769,6 +769,24 @@ def screen_login():
                 "Sign In  →", type="primary", use_container_width=True
             )
 
+        # Demo credentials banner — lets any reviewer sign in without asking.
+        st.markdown("""
+        <div style="text-align:center;margin-top:16px;background:#0d1b2e;
+                    border:1px solid #1e3a5f;border-radius:10px;padding:12px 16px;">
+          <p style="font-size:9px;font-weight:600;color:#0ea5e9;letter-spacing:2px;
+                    text-transform:uppercase;margin:0 0 6px;font-family:'Inter',sans-serif;">
+            Demo Access
+          </p>
+          <p style="font-size:13px;color:#cbd5e1;margin:0;font-family:'Inter',sans-serif;">
+            Username&nbsp; <code style="color:#60a5fa;background:#060e1d;padding:2px 8px;
+            border-radius:5px;font-family:'JetBrains Mono',monospace;">admin</code>
+            &nbsp;&nbsp;·&nbsp;&nbsp;
+            Password&nbsp; <code style="color:#60a5fa;background:#060e1d;padding:2px 8px;
+            border-radius:5px;font-family:'JetBrains Mono',monospace;">procsentinel</code>
+          </p>
+        </div>
+        """, unsafe_allow_html=True)
+
         st.markdown("""
         <div style="text-align:center;margin-top:20px;">
           <span style="font-size:11px;color:#475569;font-family:'Inter',sans-serif;">
