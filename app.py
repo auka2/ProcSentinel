@@ -38,6 +38,7 @@ BASE_DIR             = Path(__file__).resolve().parent
 CLI_SCRIPT_PATH      = BASE_DIR / "runner.py"
 MEMORY_FOLDER        = BASE_DIR / "memory"
 OUTPUT_FOLDER        = BASE_DIR / "out"
+DEMO_FOLDER          = BASE_DIR / "demo_cases"   # pre-computed sample findings (no Volatility needed)
 BASELINE_FILE_PATH   = BASE_DIR / "baseline.yaml"
 DETECTIONS_FILE_PATH = BASE_DIR / "detections.yaml"
 
@@ -372,6 +373,7 @@ def load_findings(project_name):
     candidates = [
         OUTPUT_FOLDER / project_name / "findings.jsonl",
         OUTPUT_FOLDER / project_name / "artifacts" / "findings.jsonl",
+        DEMO_FOLDER / project_name / "findings.jsonl",
     ]
     findings = []
     for fpath in candidates:
@@ -787,8 +789,17 @@ def screen_login():
             st.error("Please enter both your username and password.")
         else:
             import os as _os
-            expected_user = _os.environ.get("PROCSENTINEL_USER", "admin")
-            expected_pass = _os.environ.get("PROCSENTINEL_PASS", "procsentinel")
+            # On Streamlit Cloud, credentials live in st.secrets; locally they
+            # come from environment variables / .env. Fall back to defaults.
+            def _cred(key, default):
+                try:
+                    if key in st.secrets:
+                        return st.secrets[key]
+                except Exception:
+                    pass
+                return _os.environ.get(key, default)
+            expected_user = _cred("PROCSENTINEL_USER", "admin")
+            expected_pass = _cred("PROCSENTINEL_PASS", "procsentinel")
             if u == expected_user and p == expected_pass:
                 st.session_state.logged_in = True
                 st.session_state.login_attempts = 0
@@ -823,6 +834,39 @@ def screen_new_analysis(case_files):
 
     _, body, _ = st.columns([1, 6, 1])
     with body:
+
+        # ── Demo / Sample Cases ──────────────────────────────────────────────
+        # Lets reviewers explore real results instantly, without uploading a
+        # multi-GB dump or running Volatility. Reads pre-computed findings from
+        # demo_cases/<name>/findings.jsonl and jumps straight to the Results screen.
+        demo_cases = []
+        if DEMO_FOLDER.exists():
+            demo_cases = sorted(
+                d.name for d in DEMO_FOLDER.iterdir()
+                if d.is_dir() and (d / "findings.jsonl").exists()
+            )
+        if demo_cases:
+            st.markdown("""
+            <div style="background:#141e2e;border:1px solid #1e2d45;border-radius:12px;
+                        padding:24px 32px;margin-bottom:16px;">
+              <p style="font-size:10px;font-weight:600;color:#0ea5e9;letter-spacing:2px;
+                        text-transform:uppercase;margin-bottom:4px;font-family:'Inter',sans-serif;">
+                Try it now — Sample Cases
+              </p>
+              <p style="font-size:13px;color:#94a3b8;margin:0 0 14px;font-family:'Inter',sans-serif;">
+                Explore pre-analyzed memory images instantly. No upload required.
+              </p>
+            </div>
+            """, unsafe_allow_html=True)
+            cols = st.columns(len(demo_cases))
+            for col, dc in zip(cols, demo_cases):
+                with col:
+                    if st.button(f"📂  {dc}", key=f"demo_{dc}", use_container_width=True):
+                        st.session_state.current_case        = dc
+                        st.session_state.current_file        = f"{dc} (sample)"
+                        st.session_state.analysis_started    = False
+                        st.session_state.analysis_successful = True
+                        st.rerun()
 
         # File & case
         st.markdown("""
