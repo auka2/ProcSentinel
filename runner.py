@@ -2,24 +2,11 @@
 """
 ProcSentinel: Detection of Masqueraded Processes in Volatile Memory
 Volatility Analysis Runner
-
-University of Hail - Graduation Project
-College of Computer Science and Engineering
-Department of Computer Science
-
 December 2025
-
 Tested with: Volatility 3 (2.26.x). Python 3.10+.
-
 Usage:
   python runner.py --image memory.raw --case case1 \
     --detections detections.yaml --baseline baseline.yaml --outdir out \
-    --api-key YOUR_IP_ENRICHMENT_API_KEY
-
-Notes:
-- Keeps stdout very chatty so you can see exactly what runs.
-- Handles Win7 limitations gracefully (skips unsupported plugins).
-- Places "-r csv" BEFORE plugin name when format=csv (Vol3 quirk).
 """
 
 import argparse, json, os, re, shutil, subprocess, sys, time, textwrap
